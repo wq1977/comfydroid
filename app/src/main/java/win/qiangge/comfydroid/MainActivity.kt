@@ -117,29 +117,20 @@ fun ComfyDroidApp() {
 
     val wsManager = remember { WebSocketManager(dao) }
     
-    // 启动时初始化连接和校验
-    LaunchedEffect(Unit) {
-        if (serverIp.isNotEmpty()) {
+    // 统一处理初始化连接、校验和 WebSocket 启动
+    // 将 clientId 加入 keys 确保其更新时重新连接
+    LaunchedEffect(serverConfigured, serverIp, serverPort, clientId) {
+        if (serverConfigured && serverIp.isNotEmpty()) {
             try {
+                // NetworkClient 初始化是幂等的
                 NetworkClient.initialize(serverIp, serverPort)
-                // 尝试一次轻量级请求来验证
-                NetworkClient.getApiService().getSystemStats()
+                // 静默校验，如果失败则让用户重新连接
+                // NetworkClient.getApiService().getSystemStats()
                 wsManager.connect(serverIp, serverPort, clientId)
             } catch (e: Exception) {
-                // 连接失败，回退到连接界面
-                serverConfigured = false
-                Toast.makeText(context, "Auto-connect failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                Log.e("ComfyDroid", "Auto-connect failed", e)
+                // 暂时不强制弹回 ConnectionScreen，除非是手动连接失败
             }
-        }
-    }
-    
-    // 监听配置变化（用于 ConnectionScreen 手动连接后）
-    LaunchedEffect(serverConfigured, serverIp, serverPort) {
-        if (serverConfigured && serverIp.isNotEmpty()) {
-            // 这里只负责 WS 连接，HTTP 初始化在上面或 ConnectionScreen 做过了
-            // 但为了保险，NetworkClient 初始化是幂等的，多调无害
-            NetworkClient.initialize(serverIp, serverPort)
-            wsManager.connect(serverIp, serverPort, clientId)
         }
     }
 

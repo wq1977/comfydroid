@@ -24,6 +24,9 @@ class WebSocketManager(private val dao: GenerationDao) {
     private val taskNodeCounts = ConcurrentHashMap<String, Int>()
 
     fun connect(ip: String, port: String, clientId: String) {
+        // 先关闭之前的连接，防止多个连接竞争
+        webSocket?.close(1000, "New connection requested")
+        
         val url = "ws://$ip:$port/ws?clientId=$clientId"
         Log.d("ComfyWS", "Attempting connection to: $url")
         
@@ -71,10 +74,10 @@ class WebSocketManager(private val dao: GenerationDao) {
                         val count = taskNodeCounts.getOrDefault(promptId, 0) + 1
                         taskNodeCounts[promptId] = count
                         
-                        // 这是一个新的节点开始，节点内进度重置为 0
-                        // 我们不知道这个节点是干嘛的，只能显示 Node ID
+                        // 这是一个新的节点开始
                         val status = if (node != null) "Node $node (#$count)" else "Processing (#$count)"
-                        updateStatus(promptId, status, 0)
+                        // 传入 -1 表示维持之前的进度百分比，不重置为 0
+                        updateStatus(promptId, status, -1)
                     }
                 }
                 "progress" -> {
@@ -87,7 +90,6 @@ class WebSocketManager(private val dao: GenerationDao) {
                     
                     if (promptId != null) {
                         val count = taskNodeCounts.getOrDefault(promptId, 0)
-                        // 显示：Sampling (Step 5/20) - Node #3
                         val status = "Sampling ($value/$max) - Node #$count"
                         updateStatus(promptId, status, progress, value, max)
                     }
@@ -110,9 +112,9 @@ class WebSocketManager(private val dao: GenerationDao) {
             if (task != null && task.status == "PENDING") {
                 val updated = task.copy(
                     nodeStatus = statusMsg,
-                    progress = progress, // 这是节点内进度
-                    currentStep = currentStep,
-                    maxSteps = maxSteps
+                    progress = if (progress == -1) task.progress else progress,
+                    currentStep = if (currentStep > 0) currentStep else task.currentStep,
+                    maxSteps = if (maxSteps > 0) maxSteps else task.maxSteps
                 )
                 dao.update(updated)
             }
