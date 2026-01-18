@@ -11,25 +11,26 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import win.qiangge.comfydroid.model.GenerationResult
-import java.text.SimpleDateFormat
-import java.util.*
+import coil.request.ImageRequest
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.Alignment
 
 @Composable
 fun LibraryScreen(
     results: List<GenerationResult>,
-    serverUrl: String, // 用于拼接图片完整 URL
+    serverUrl: String,
     onDelete: (GenerationResult) -> Unit
 ) {
     if (results.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("No generations yet. Go create something!", style = MaterialTheme.typography.bodyLarge)
         }
     } else {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 150.dp),
+            columns = GridCells.Adaptive(minSize = 160.dp),
             contentPadding = PaddingValues(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(results) { result ->
                 ResultCard(result, serverUrl, onDelete)
@@ -44,39 +45,73 @@ fun ResultCard(
     serverUrl: String,
     onDelete: (GenerationResult) -> Unit
 ) {
-    // 假设 outputFiles 是简单的逗号分隔文件名 (真实场景需要 JSON 解析)
     val firstFile = result.outputFiles.split(",").firstOrNull()?.trim()
-    val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile" else null
+    val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile&type=output" else null
 
     Card(
-        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        modifier = Modifier.fillMaxWidth().aspectRatio(0.8f), // Slightly taller card to fit status
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (imageUrl != null) {
+            if (result.status == "COMPLETED" && imageUrl != null) {
                 AsyncImage(
-                    model = imageUrl,
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(imageUrl)
+                        .crossfade(true)
+                        .build(),
                     contentDescription = result.promptText,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                    CircularProgressIndicator()
+                // Pending / Processing State
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    if (result.status == "PENDING") {
+                        if (result.progress > 0) {
+                            LinearProgressIndicator(
+                                progress = result.progress / 100f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "${result.progress}%", 
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            result.nodeStatus, 
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text("Failed", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
             
-            // 简单的底部遮罩显示 Prompt 摘要
+            // Text overlay at bottom
             Surface(
-                modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
             ) {
-                Text(
-                    text = result.promptText,
-                    maxLines = 1,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(4.dp)
-                )
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Text(
+                        text = result.promptText,
+                        maxLines = 2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
     }

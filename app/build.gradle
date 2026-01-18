@@ -7,6 +7,7 @@ plugins {
 android {
     namespace 'win.qiangge.comfydroid'
     compileSdk 34
+    buildToolsVersion "36.1.0"
 
     defaultConfig {
         applicationId "win.qiangge.comfydroid"

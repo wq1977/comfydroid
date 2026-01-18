@@ -58,3 +58,6 @@ gradle-8.5-bin.zip
 
 # Room Schema (Optional: if you want to track changes in DB schema, comment this out)
 # schemas/
+android-sdk-arm64.tar.xz
+*.txt
+*.json

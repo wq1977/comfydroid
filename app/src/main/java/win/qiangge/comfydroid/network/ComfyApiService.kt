@@ -8,12 +8,18 @@ import retrofit2.http.Headers
 import retrofit2.http.Multipart
 import retrofit2.http.Part
 import okhttp3.MultipartBody
+import okhttp3.RequestBody
 
 data class PromptRequest(
-// ... (keep existing)
+    val prompt: Map<String, Any>,
+    val client_id: String? = null
+)
 
 data class PromptResponse(
-// ... (keep existing)
+    val prompt_id: String,
+    val number: Int,
+    val node_errors: Map<String, Any>?
+)
 
 data class ImageUploadResponse(
     val name: String,
@@ -28,6 +34,10 @@ interface ComfyApiService {
 
     @POST("prompt")
     suspend fun queuePrompt(@Body request: PromptRequest): PromptResponse
+
+    @POST("prompt")
+    @Headers("Content-Type: application/json")
+    suspend fun queuePromptRaw(@Body request: RequestBody): PromptResponse
     
     @GET("history/{prompt_id}")
     suspend fun getHistory(@Path("prompt_id") promptId: String): Map<String, Any>
@@ -36,5 +46,3 @@ interface ComfyApiService {
     @POST("upload/image")
     suspend fun uploadImage(@Part image: MultipartBody.Part): ImageUploadResponse
 }
-
-
