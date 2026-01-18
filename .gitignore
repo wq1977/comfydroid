@@ -1,0 +1,59 @@
+# Built artifacts
+bin/
+gen/
+out/
+build/
+.gradle/
+app/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/assetWizardSettings.xml
+.idea/modules.xml
+.idea/navEditor.xml
+.idea/caches/
+.idea/libraries/
+
+# Local configuration
+local.properties
+gradle.properties
+# 注意：如果你在 gradle.properties 里放了签名密钥等敏感信息，请务必将其排除。
+# 但对于开源或通用项目，通常只排除 local.properties。
+
+# Log files
+*.log
+
+# External native build artifacts
+.externalNativeBuild/
+.cxx/
+
+# Captured Screenshots
+captures/
+
+# Keystore files (NEVER commit these!)
+*.jks
+*.keystore
+*.p12
+
+# Google Services
+google-services.json
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Project specific (Agent temp files)
+aapt2_arm.jar
+aapt2
+aapt2.deb
+room_deps.txt
+gradle-8.5/
+gradle-8.5-bin.zip
+
+# Room Schema (Optional: if you want to track changes in DB schema, comment this out)
+# schemas/
