@@ -21,6 +21,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -202,18 +203,18 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
     val workflows = WorkflowRegistry.workflows
     var selectedWorkflow by remember { mutableStateOf<SuperWorkflow?>(null) }
     val libraryResults by dao.getAll().collectAsState(initial = emptyList())
-    var fullScreenResult by remember { mutableStateOf<GenerationResult?>(null) }
+    var fullScreenIndex by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
 
     // 处理返回键：如果在 Library 界面且没有全屏预览，返回 Generator
-    BackHandler(enabled = currentScreen == Screen.Library && fullScreenResult == null) {
+    BackHandler(enabled = currentScreen == Screen.Library && fullScreenIndex == null) {
         currentScreen = Screen.Generator
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             bottomBar = {
-                if (fullScreenResult == null) {
+                if (fullScreenIndex == null) {
                     NavigationBar {
                         val items = listOf(Screen.Generator, Screen.Library)
                         items.forEach { screen ->
@@ -276,14 +277,21 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
                                     dao.deleteByIds(ids)
                                 }
                             },
-                            onImageClick = { fullScreenResult = it }
+                            onImageClick = { result -> 
+                                fullScreenIndex = libraryResults.indexOf(result)
+                            }
                         )
                     }
                 }
             }
         }
-        if (fullScreenResult != null) {
-            FullScreenImageViewer(result = fullScreenResult!!, serverUrl = "http://$ip:$port", onDismiss = { fullScreenResult = null })
+        if (fullScreenIndex != null) {
+            FullScreenImageViewer(
+                results = libraryResults,
+                initialIndex = fullScreenIndex!!,
+                serverUrl = "http://$ip:$port", 
+                onDismiss = { fullScreenIndex = null }
+            )
         }
     }
 }
@@ -545,16 +553,22 @@ fun AspectRatioSelector(onSelect: (Int, Int) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss: () -> Unit) {
+fun FullScreenImageViewer(results: List<GenerationResult>, initialIndex: Int, serverUrl: String, onDismiss: () -> Unit) {
     // 拦截返回键
     BackHandler(onBack = onDismiss)
 
-    val firstFile = result.outputFiles.split(",").firstOrNull()?.trim()
-    val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile&type=output" else null
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
+    var showSheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState()
+    
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(initialPage = initialIndex) {
+        results.size
+    }
+
     DisposableEffect(Unit) {
         val window = (context as? Activity)?.window
         if (window != null) {
@@ -571,32 +585,110 @@ fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black).clickable { onDismiss() }, contentAlignment = Alignment.Center) {
-        if (imageUrl != null) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.foundation.pager.HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            beyondBoundsPageCount = 1,
+            // 只有在放大状态下才禁用 Pager 的滑动，交给图片内部处理偏移
+            userScrollEnabled = true 
+        ) { page ->
+            val result = results[page]
+            val firstFile = result.outputFiles.split(",").firstOrNull()?.trim()
+            val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile&type=output" else null
+
             var scale by remember { mutableStateOf(1f) }
             var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(imageUrl).crossfade(true).build(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 5f)
-                        offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+
+            // 切换页面重置缩放
+            LaunchedEffect(pagerState.currentPage) {
+                if (pagerState.currentPage != page) {
+                    scale = 1f
+                    offset = androidx.compose.ui.geometry.Offset.Zero
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { onDismiss() },
+                            onDoubleTap = {
+                                scale = if (scale > 1f) 1f else 3f
+                                offset = androidx.compose.ui.geometry.Offset.Zero
+                            },
+                            onLongPress = { showSheet = true }
+                        )
                     }
-                }.graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
-                contentScale = ContentScale.Fit
-            )
-            
-            Row(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.4f)).padding(16.dp),
-                horizontalArrangement = Arrangement.End
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 5f)
+                            if (scale > 1f) {
+                                offset += pan
+                            } else {
+                                offset = androidx.compose.ui.geometry.Offset.Zero
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center
             ) {
-                IconButton(onClick = {
-                    scope.launch {
-                        saveToGallery(context, imageUrl, firstFile ?: "image.png")
-                    }
-                }) {
-                    Icon(Icons.Default.ArrowDropDown, "Save", tint = Color.White)
+                if (imageUrl != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current).data(imageUrl).crossfade(true).build(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offset.x,
+                                translationY = offset.y
+                            ),
+                        contentScale = ContentScale.Fit
+                    )
+                }
+            }
+        }
+
+        if (showSheet) {
+            val currentResult = results[pagerState.currentPage]
+            val currentFirstFile = currentResult.outputFiles.split(",").firstOrNull()?.trim()
+            val currentImageUrl = if (!currentFirstFile.isNullOrEmpty()) "$serverUrl/view?filename=$currentFirstFile&type=output" else null
+
+            ModalBottomSheet(
+                onDismissRequest = { showSheet = false },
+                sheetState = sheetState,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 32.dp)
+                ) {
+                    ListItem(
+                        headlineContent = { Text("Save to Gallery") },
+                        leadingContent = { Icon(Icons.Default.Add, contentDescription = null) },
+                        modifier = Modifier.clickable {
+                            showSheet = false
+                            if (currentImageUrl != null) {
+                                scope.launch {
+                                    saveToGallery(context, currentImageUrl, currentFirstFile ?: "image.png")
+                                }
+                            }
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Cancel") },
+                        leadingContent = { Icon(Icons.Default.Close, contentDescription = null) },
+                        modifier = Modifier.clickable { showSheet = false }
+                    )
                 }
             }
         }
