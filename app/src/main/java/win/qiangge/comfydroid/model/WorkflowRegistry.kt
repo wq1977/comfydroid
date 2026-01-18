@@ -14,7 +14,13 @@ object WorkflowRegistry {
                     multiline = true,
                     defaultValue = "A beautiful landscape"
                 ),
-                // (图片输入将由 UI 特殊处理)
+                
+                ImageArrayInput(
+                    id = "ref_images",
+                    label = "参考图片 (Reference Images)",
+                    maxCount = 5,
+                    isRequired = false
+                ),
 
                 // --- 高级区域 (UI 将根据 ID 或顺序折叠这些) ---
                 NumberInput(
