@@ -57,6 +57,7 @@ import win.qiangge.comfydroid.model.*
 import win.qiangge.comfydroid.network.NetworkClient
 import win.qiangge.comfydroid.network.PromptRequest
 import win.qiangge.comfydroid.network.WorkflowEngine
+import win.qiangge.comfydroid.network.WebSocketManager
 import win.qiangge.comfydroid.service.PollingService
 import java.io.File
 import java.util.UUID
@@ -96,6 +97,16 @@ fun ComfyDroidApp() {
     if (clientId.isEmpty()) {
         clientId = UUID.randomUUID().toString()
         prefs.edit().putString("client_id", clientId).apply()
+    }
+
+    // WebSocket 管理器
+    val wsManager = remember { WebSocketManager(dao) }
+
+    // 当连接配置好后，启动 WebSocket
+    LaunchedEffect(serverConfigured, serverIp, serverPort) {
+        if (serverConfigured && serverIp.isNotEmpty()) {
+            wsManager.connect(serverIp, serverPort, clientId)
+        }
     }
 
     Surface(
