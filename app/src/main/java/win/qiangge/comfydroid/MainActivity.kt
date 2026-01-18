@@ -1,11 +1,14 @@
 package win.qiangge.comfydroid
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -25,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -47,6 +51,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.exifinterface.media.ExifInterface
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.ImageRequest
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -176,7 +181,12 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
     val workflows = WorkflowRegistry.workflows
     var selectedWorkflow by remember { mutableStateOf<SuperWorkflow?>(null) }
     val libraryResults by dao.getAll().collectAsState(initial = emptyList())
+    
+    // 全屏预览状态
     var fullScreenResult by remember { mutableStateOf<GenerationResult?>(null) }
+    
+    // 用于处理数据库操作的协程作用域
+    val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -235,7 +245,16 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
                         }
                     }
                     Screen.Library -> {
-                        LibraryScreen(results = libraryResults, serverUrl = "http://$ip:$port", onDelete = { /* TODO */ }, onImageClick = { fullScreenResult = it })
+                        LibraryScreen(
+                            results = libraryResults, 
+                            serverUrl = "http://$ip:$port", 
+                            onDelete = { ids -> 
+                                scope.launch {
+                                    dao.deleteByIds(ids)
+                                }
+                            },
+                            onImageClick = { fullScreenResult = it }
+                        )
                     }
                 }
             }
@@ -470,6 +489,9 @@ fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss
     val firstFile = result.outputFiles.split(",").firstOrNull()?.trim()
     val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile&type=output" else null
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    
+    // ... (System bars hiding logic unchanged) ...
     DisposableEffect(Unit) {
         val window = (context as? Activity)?.window
         if (window != null) {
@@ -485,6 +507,7 @@ fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss
             }
         }
     }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black).clickable { onDismiss() }, contentAlignment = Alignment.Center) {
         if (imageUrl != null) {
             var scale by remember { mutableStateOf(1f) }
@@ -500,6 +523,51 @@ fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss
                 }.graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
                 contentScale = ContentScale.Fit
             )
+            
+            // 底部操作栏
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                IconButton(onClick = {
+                    scope.launch {
+                        saveToGallery(context, imageUrl, firstFile ?: "image.png")
+                    }
+                }) {
+                    Icon(Icons.Default.ArrowDropDown, "Save", tint = Color.White)
+                }
+            }
         }
+    }
+}
+
+suspend fun saveToGallery(context: Context, imageUrl: String, filename: String) {
+    try {
+        // 使用 Coil 的 Loader 下载图片流
+        val request = ImageRequest.Builder(context).data(imageUrl).build()
+        val bitmap = (context.imageLoader.execute(request).drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+        
+        if (bitmap != null) {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "ComfyDroid_$filename")
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ComfyDroid")
+            }
+            
+            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                }
+                Toast.makeText(context, "Saved to Gallery", Toast.LENGTH_SHORT).show()
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Toast.makeText(context, "Save Failed: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }

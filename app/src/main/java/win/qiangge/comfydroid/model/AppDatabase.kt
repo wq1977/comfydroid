@@ -29,6 +29,9 @@ interface GenerationDao {
     
     @Query("DELETE FROM generation_results WHERE id = :id")
     suspend fun deleteById(id: Int)
+
+    @Query("DELETE FROM generation_results WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Int>)
 }
 
 @Database(entities = [GenerationResult::class], version = 2, exportSchema = false)
