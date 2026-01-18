@@ -7,16 +7,63 @@ import org.json.JSONArray
 /**
  * 核心引擎：使用原生 JSONObject 确保类型安全
  */
-
 class WorkflowEngine(private val context: Context) {
 
-    fun getRawTemplate(): String {
-        return context.assets.open("templates/flux_base.json").bufferedReader().use { it.readText() }
+    fun getRawTemplate(name: String = "flux_base.json"): String {
+        return context.assets.open("templates/$name").bufferedReader().use { it.readText() }
     }
 
-    fun buildFluxWorkflow(
-        inputs: Map<String, Any>
-    ): String {
+    fun buildWorkflow(workflowId: String, inputs: Map<String, Any>): String {
+        return when (workflowId) {
+            "flux2klein" -> buildFlux2Klein(inputs)
+            "z_image_turbo" -> buildZImageTurbo(inputs)
+            else -> "{}"
+        }
+    }
+
+    private fun buildZImageTurbo(inputs: Map<String, Any>): String {
+        val prompt = inputs["prompt"] as? String ?: ""
+        val seedRaw = inputs["seed"]
+        val seed = when(seedRaw) {
+            is Long -> seedRaw
+            is Float -> seedRaw.toLong()
+            is Int -> seedRaw.toLong()
+            else -> 0L
+        }
+        val finalSeed = if (seed <= 0) (0..Long.MAX_VALUE).random() else seed
+
+        val width = (inputs["width"] as? Number)?.toInt() ?: 1280
+        val height = (inputs["height"] as? Number)?.toInt() ?: 720
+        val steps = (inputs["steps"] as? Number)?.toInt() ?: 9
+        val cfg = (inputs["cfg"] as? Number)?.toDouble() ?: 1.0
+
+        val jsonString = getRawTemplate("z_image_turbo.json")
+        val workflow = JSONObject(jsonString)
+
+        // 1. Prompt (Node 45)
+        if (workflow.has("45")) {
+            workflow.getJSONObject("45").getJSONObject("inputs").put("text", prompt)
+        }
+
+        // 2. KSampler (Node 44) - Steps, CFG, Seed
+        if (workflow.has("44")) {
+            val inputs = workflow.getJSONObject("44").getJSONObject("inputs")
+            inputs.put("seed", finalSeed)
+            inputs.put("steps", steps)
+            inputs.put("cfg", cfg)
+        }
+
+        // 3. Empty Latent (Node 41) - Width, Height
+        if (workflow.has("41")) {
+            val inputs = workflow.getJSONObject("41").getJSONObject("inputs")
+            inputs.put("width", width)
+            inputs.put("height", height)
+        }
+
+        return workflow.toString()
+    }
+
+    private fun buildFlux2Klein(inputs: Map<String, Any>): String {
         val prompt = inputs["prompt"] as? String ?: ""
         val seedRaw = inputs["seed"]
         val seed = when(seedRaw) {
@@ -29,26 +76,11 @@ class WorkflowEngine(private val context: Context) {
         // 1. 加载基础模板
         // 检查是否有参考图
         val imagePaths = (inputs["ref_images"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-        val templateName = if (imagePaths.isNotEmpty()) "templates/flux_reference_template.json" else "templates/flux_base.json"
+        val templateName = if (imagePaths.isNotEmpty()) "flux_reference_template.json" else "flux_base.json"
         
-        val jsonString = context.assets.open(templateName).bufferedReader().use { it.readText() }
+        val jsonString = getRawTemplate(templateName)
         val workflow = JSONObject(jsonString)
 
-        // 2. 修改基础参数 (使用 JSONObject 直接修改，保留类型)
-        
-        // 修改 75:74 (CLIPTextEncode) 的 text
-        // 注意：reference 模板中 prompt 节点 ID 可能不同。
-        // turbo-text.json: 75:74 (Positive)
-        // turbo-edit.json: 92:74 (Positive)
-        // 为了通用，我们需要根据模板查找 ID，或者我们约定好 ID。
-        // 这里为了简单，我们假设 ID 映射关系：
-        // Base -> Ref
-        // 75:74 -> 92:74 (Prompt)
-        // 75:73 -> 92:73 (Seed)
-        // 75:62 -> 92:62 (Scheduler)
-        // 75:63 -> 92:63 (Guider)
-        // 75:66 -> 92:66 (EmptyLatent)
-        
         val idPrefix = if (imagePaths.isNotEmpty()) "92" else "75"
         
         // 修改 Prompt
@@ -79,7 +111,6 @@ class WorkflowEngine(private val context: Context) {
         if (workflow.has(schedulerId)) {
             val nodeInputs = workflow.getJSONObject(schedulerId).getJSONObject("inputs")
             nodeInputs.put("steps", steps)
-            // 如果是 Ref 模式，宽高通常由图片决定，但我们这里强制覆盖
             nodeInputs.put("width", width)
             nodeInputs.put("height", height)
         }
@@ -96,7 +127,6 @@ class WorkflowEngine(private val context: Context) {
         if (workflow.has(emptyLatentId)) {
             val nodeInputs = workflow.getJSONObject(emptyLatentId).getJSONObject("inputs")
             // 关键修复：无论是否有参考图，都强制使用 UI 指定的宽高
-            // 断开可能存在的 GetImageSize 连接
             nodeInputs.put("width", width)
             nodeInputs.put("height", height)
         }
@@ -110,14 +140,6 @@ class WorkflowEngine(private val context: Context) {
     }
 
     private fun applyReferenceImages(workflow: JSONObject, imagePaths: List<String>) {
-        // 在 turbo-edit.json 中：
-        // 原始链：Prompt(92:74) -> RefLatent(92:79:77) -> RefLatent(92:84:77) -> Guider(92:63)
-        // 这是一个比较复杂的双图结构。
-        // 为了支持动态 N 张图，我们需要重建这个链条。
-        
-        // 1. 找到 Guider 的 positive 输入，看看它连着谁。
-        // 目标：构建 Prompt -> Ref1 -> Ref2 -> ... -> RefN -> Guider
-        
         // 起点：Prompt 节点
         var currentConditioningOutput = JSONArray().put("92:74").put(0) // ["92:74", 0]
         
@@ -137,10 +159,6 @@ class WorkflowEngine(private val context: Context) {
             workflow.put(loadImageId, loadImageNode)
             
             // B. VAEEncode (需要 VAE)
-            // 注意：为了效果更好，通常需要先 Scale 图片。这里简化，直接 VAEEncode。
-            // 或者我们可以复用模板里的 ImageScaleToTotalPixels 逻辑，但这太复杂了。
-            // 我们直接用 LoadImage -> VAEEncode -> ReferenceLatent
-            
             val vaeEncodeId = "VAEEncode$idSuffix"
             val vaeEncodeNode = JSONObject()
             vaeEncodeNode.put("class_type", "VAEEncode")
@@ -168,6 +186,4 @@ class WorkflowEngine(private val context: Context) {
         val guiderInputs = workflow.getJSONObject("92:63").getJSONObject("inputs")
         guiderInputs.put("positive", currentConditioningOutput)
     }
-
-
 }

@@ -487,12 +487,13 @@ fun WorkflowExecutorScreen(
             CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
         } else {
             Button(onClick = { 
-                isGenerating = true
-                scope.launch {
-                    try {
-                        val promptText = inputStates["prompt"] as? String ?: ""
-                        val workflowJson = engine.buildFluxWorkflow(inputStates)
-                        val finalJson = "{\"client_id\": \"$clientId\", \"prompt\": $workflowJson}"
+                                    isGenerating = true
+                                scope.launch {
+                                    try {
+                                        val promptText = inputStates["prompt"] as? String ?: ""
+                                        val workflowJson = engine.buildWorkflow(workflow.id, inputStates)
+                                        val finalJson = "{\"client_id\": \"$clientId\", \"prompt\": $workflowJson}"
+                
                         val mediaType = "application/json".toMediaTypeOrNull()
                         val body = RequestBody.create(mediaType, finalJson)
                         val response = NetworkClient.getApiService().queuePromptRaw(body)
