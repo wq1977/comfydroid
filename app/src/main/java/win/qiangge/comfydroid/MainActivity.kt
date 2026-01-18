@@ -12,6 +12,7 @@ import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -101,9 +102,12 @@ fun ComfyDroidApp() {
     }
 
     val prefs = remember { context.getSharedPreferences("comfydroid_prefs", Context.MODE_PRIVATE) }
-    var serverConfigured by remember { mutableStateOf(false) }
     var serverIp by remember { mutableStateOf(prefs.getString("last_ip", "") ?: "") }
     var serverPort by remember { mutableStateOf(prefs.getString("last_port", "8188") ?: "8188") }
+    
+    // 如果有保存的 IP，默认认为已配置，直接进入 MainScreen
+    // 我们会在后台静默校验，如果失败再退回
+    var serverConfigured by remember { mutableStateOf(serverIp.isNotEmpty()) }
     
     var clientId by remember { mutableStateOf(prefs.getString("client_id", "") ?: "") }
     if (clientId.isEmpty()) {
@@ -112,8 +116,29 @@ fun ComfyDroidApp() {
     }
 
     val wsManager = remember { WebSocketManager(dao) }
+    
+    // 启动时初始化连接和校验
+    LaunchedEffect(Unit) {
+        if (serverIp.isNotEmpty()) {
+            try {
+                NetworkClient.initialize(serverIp, serverPort)
+                // 尝试一次轻量级请求来验证
+                NetworkClient.getApiService().getSystemStats()
+                wsManager.connect(serverIp, serverPort, clientId)
+            } catch (e: Exception) {
+                // 连接失败，回退到连接界面
+                serverConfigured = false
+                Toast.makeText(context, "Auto-connect failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    // 监听配置变化（用于 ConnectionScreen 手动连接后）
     LaunchedEffect(serverConfigured, serverIp, serverPort) {
         if (serverConfigured && serverIp.isNotEmpty()) {
+            // 这里只负责 WS 连接，HTTP 初始化在上面或 ConnectionScreen 做过了
+            // 但为了保险，NetworkClient 初始化是幂等的，多调无害
+            NetworkClient.initialize(serverIp, serverPort)
             wsManager.connect(serverIp, serverPort, clientId)
         }
     }
@@ -285,7 +310,14 @@ fun WorkflowExecutorScreen(
             workflow.inputs.forEach { input ->
                 when (input) {
                     is TextInput -> put(input.id, input.defaultValue)
-                    is NumberInput -> put(input.id, input.defaultValue)
+                    is NumberInput -> {
+                        if (input.id == "seed") {
+                            // 初始打开时就给一个随机种子
+                            put(input.id, (0..Long.MAX_VALUE).random())
+                        } else {
+                            put(input.id, input.defaultValue)
+                        }
+                    }
                     is ImageArrayInput -> put(input.id, emptyList<String>())
                     else -> {} 
                 }
@@ -297,7 +329,6 @@ fun WorkflowExecutorScreen(
         if (uri != null) {
             scope.launch {
                 try {
-                    // 1. 获取图片尺寸并处理方向
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
                     
@@ -519,6 +550,9 @@ fun AspectRatioSelector(onSelect: (Int, Int) -> Unit) {
 
 @Composable
 fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss: () -> Unit) {
+    // 拦截返回键
+    BackHandler(onBack = onDismiss)
+
     val firstFile = result.outputFiles.split(",").firstOrNull()?.trim()
     val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile&type=output" else null
     val context = LocalContext.current

@@ -3,8 +3,8 @@ package win.qiangge.comfydroid.model
 object WorkflowRegistry {
     val workflows = listOf(
         SuperWorkflow(
-            id = "flux_ref",
-            name = "Flux 参考图生成 (超级版)",
+            id = "flux2klein",
+            name = "Flux 2 Klein",
             description = "支持 0-N 张参考图的智能生成流程。如果只提供文本，就是普通文生图；如果提供图片，自动启用参考生成。",
             inputs = listOf(
                 // --- 基础区域 ---
