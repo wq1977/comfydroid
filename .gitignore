@@ -21,7 +21,8 @@ app/build/
 
 # Local configuration
 local.properties
-gradle.properties
+# gradle.properties <- 移除忽略，项目配置需要它
+
 # 注意：如果你在 gradle.properties 里放了签名密钥等敏感信息，请务必将其排除。
 # 但对于开源或通用项目，通常只排除 local.properties。
 
