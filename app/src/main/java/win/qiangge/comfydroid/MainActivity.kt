@@ -23,12 +23,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -38,6 +42,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -181,11 +186,7 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
     val workflows = WorkflowRegistry.workflows
     var selectedWorkflow by remember { mutableStateOf<SuperWorkflow?>(null) }
     val libraryResults by dao.getAll().collectAsState(initial = emptyList())
-    
-    // 全屏预览状态
     var fullScreenResult by remember { mutableStateOf<GenerationResult?>(null) }
-    
-    // 用于处理数据库操作的协程作用域
     val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -240,7 +241,8 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
                                     currentScreen = Screen.Library
                                 },
                                 dao = dao,
-                                clientId = clientId
+                                clientId = clientId,
+                                serverUrl = "http://$ip:$port"
                             )
                         }
                     }
@@ -266,7 +268,15 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
 }
 
 @Composable
-fun WorkflowExecutorScreen(workflow: SuperWorkflow, onBack: () -> Unit, onSuccess: () -> Unit, dao: GenerationDao, clientId: String, modifier: Modifier = Modifier) {
+fun WorkflowExecutorScreen(
+    workflow: SuperWorkflow, 
+    onBack: () -> Unit, 
+    onSuccess: () -> Unit, 
+    dao: GenerationDao, 
+    clientId: String, 
+    serverUrl: String,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember { WorkflowEngine(context) }
@@ -326,13 +336,10 @@ fun WorkflowExecutorScreen(workflow: SuperWorkflow, onBack: () -> Unit, onSucces
                                 targetH = (h * ratio).toInt()
                             }
                             
-                            // 对齐 16 
                             targetW = (targetW / 16) * 16
                             targetH = (targetH / 16) * 16
                             
-                            // 先旋转
                             val rotatedBitmap = android.graphics.Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true)
-                            // 再缩放
                             finalBitmap = android.graphics.Bitmap.createScaledBitmap(rotatedBitmap, targetW, targetH, true)
                             
                             if (rotatedBitmap != originalBitmap) originalBitmap.recycle()
@@ -383,17 +390,43 @@ fun WorkflowExecutorScreen(workflow: SuperWorkflow, onBack: () -> Unit, onSucces
         basicInputs.forEach { input ->
             if (input is ImageArrayInput) {
                 val images = (inputStates[input.id] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).clickable { imagePickerLauncher.launch("image/*") }, 
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(input.label, style = MaterialTheme.typography.labelMedium)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        if (images.isEmpty()) {
-                            Text("Tap to add reference images (0/${input.maxCount})", style = MaterialTheme.typography.bodySmall)
-                        } else {
-                            images.forEach { Text("📄 $it", style = MaterialTheme.typography.bodyMedium) }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("+ Add Another", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Text(input.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                        items(images) { filename ->
+                            Box(modifier = Modifier.size(100.dp).clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data("$serverUrl/view?filename=$filename&type=input")
+                                        .crossfade(true).build(),
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val newList = images.toMutableList()
+                                        newList.remove(filename)
+                                        inputStates[input.id] = newList
+                                    },
+                                    modifier = Modifier.align(Alignment.TopEnd).size(24.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                ) {
+                                    Icon(Icons.Default.Close, "Remove", tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                        if (images.size < input.maxCount) {
+                            item {
+                                Box(
+                                    modifier = Modifier.size(100.dp).clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .clickable { imagePickerLauncher.launch("image/*") },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Add, "Add Image", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
                         }
                     }
                 }
@@ -491,7 +524,6 @@ fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
-    // ... (System bars hiding logic unchanged) ...
     DisposableEffect(Unit) {
         val window = (context as? Activity)?.window
         if (window != null) {
@@ -524,13 +556,8 @@ fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss
                 contentScale = ContentScale.Fit
             )
             
-            // 底部操作栏
             Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.4f))
-                    .padding(16.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.4f)).padding(16.dp),
                 horizontalArrangement = Arrangement.End
             ) {
                 IconButton(onClick = {
@@ -547,7 +574,6 @@ fun FullScreenImageViewer(result: GenerationResult, serverUrl: String, onDismiss
 
 suspend fun saveToGallery(context: Context, imageUrl: String, filename: String) {
     try {
-        // 使用 Coil 的 Loader 下载图片流
         val request = ImageRequest.Builder(context).data(imageUrl).build()
         val bitmap = (context.imageLoader.execute(request).drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
         
