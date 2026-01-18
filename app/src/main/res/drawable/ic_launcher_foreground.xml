@@ -1,0 +1,35 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- 装饰性圆环 -->
+    <path
+        android:fillColor="#16213E"
+        android:pathData="M54,54m-44,0a44,44 0,1 1,88 0a44,44 0,1 1,-88 0" />
+
+    <!-- 核心 C 形流动 (Cyan/Blue) -->
+    <path
+        android:fillColor="#0F3460"
+        android:pathData="M54,24 C70,24 82,36 82,54 C82,72 70,84 54,84 C38,84 26,72 26,54 L18,54 C18,78 34,92 54,92 C74,92 90,78 90,54 C90,30 74,16 54,16 Z" />
+
+    <!-- 内部节点连接 (Orange/Accent) -->
+    <path
+        android:fillColor="#E94560"
+        android:pathData="M54,42 L64,60 L44,60 Z" />
+        
+    <!-- 另一个节点 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.8"
+        android:pathData="M54,34a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+
+    <!-- 连接线 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.5"
+        android:pathData="M54,38 L54,42" />
+
+</vector>
