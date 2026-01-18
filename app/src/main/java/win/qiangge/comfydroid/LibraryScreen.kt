@@ -207,6 +207,22 @@ fun ResultCard(
                 }
             }
             
+            // 在右上角显示流程名称
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                color = Color.Black.copy(alpha = 0.5f),
+                shape = MaterialTheme.shapes.extraSmall
+            ) {
+                Text(
+                    text = result.workflowName,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White
+                )
+            }
+            
             if (isSelectionMode) {
                 Box(
                     modifier = Modifier
