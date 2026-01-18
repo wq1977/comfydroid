@@ -205,6 +205,11 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
     var fullScreenResult by remember { mutableStateOf<GenerationResult?>(null) }
     val scope = rememberCoroutineScope()
 
+    // 处理返回键：如果在 Library 界面且没有全屏预览，返回 Generator
+    BackHandler(enabled = currentScreen == Screen.Library && fullScreenResult == null) {
+        currentScreen = Screen.Generator
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             bottomBar = {
