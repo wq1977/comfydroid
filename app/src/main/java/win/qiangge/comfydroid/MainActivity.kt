@@ -3,6 +3,7 @@ package win.qiangge.comfydroid
 import android.app.Activity
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.exifinterface.media.ExifInterface
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.google.gson.Gson
@@ -99,10 +101,7 @@ fun ComfyDroidApp() {
         prefs.edit().putString("client_id", clientId).apply()
     }
 
-    // WebSocket 管理器
     val wsManager = remember { WebSocketManager(dao) }
-
-    // 当连接配置好后，启动 WebSocket
     LaunchedEffect(serverConfigured, serverIp, serverPort) {
         if (serverConfigured && serverIp.isNotEmpty()) {
             wsManager.connect(serverIp, serverPort, clientId)
@@ -252,7 +251,7 @@ fun WorkflowExecutorScreen(workflow: SuperWorkflow, onBack: () -> Unit, onSucces
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember { WorkflowEngine(context) }
-    val inputStates = remember {
+    val inputStates = remember { 
         mutableStateMapOf<String, Any>().apply {
             workflow.inputs.forEach { input ->
                 when (input) {
@@ -269,45 +268,68 @@ fun WorkflowExecutorScreen(workflow: SuperWorkflow, onBack: () -> Unit, onSucces
         if (uri != null) {
             scope.launch {
                 try {
+                    // 1. 获取图片尺寸并处理方向
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
                     
+                    var rotation = 0f
+                    context.contentResolver.openInputStream(uri)?.use {
+                        val exif = ExifInterface(it)
+                        val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+                        rotation = when (orientation) {
+                            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                            else -> 0f
+                        }
+                    }
+                    
                     var w = options.outWidth
                     var h = options.outHeight
+                    if (rotation == 90f || rotation == 270f) {
+                        val temp = w; w = h; h = temp
+                    }
+
                     var finalBitmap: android.graphics.Bitmap? = null
+                    val maxDim = 1280
                     
                     if (w > 0 && h > 0) {
-                        val maxDim = 1280
-                        if (w > maxDim || h > maxDim) {
-                            val ratio = min(maxDim.toFloat() / w, maxDim.toFloat() / h)
-                            val newW = (w * ratio).toInt()
-                            val newH = (h * ratio).toInt()
+                        val originalBitmap = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+                        if (originalBitmap != null) {
+                            val matrix = Matrix()
+                            matrix.postRotate(rotation)
                             
-                            val originalBitmap = BitmapFactory.decodeStream(context.contentResolver.openInputStream(uri))
-                            if (originalBitmap != null) {
-                                finalBitmap = android.graphics.Bitmap.createScaledBitmap(originalBitmap, newW, newH, true)
-                                w = newW
-                                h = newH
-                                originalBitmap.recycle()
+                            var targetW = w
+                            var targetH = h
+                            if (w > maxDim || h > maxDim) {
+                                val ratio = min(maxDim.toFloat() / w, maxDim.toFloat() / h)
+                                targetW = (w * ratio).toInt()
+                                targetH = (h * ratio).toInt()
                             }
+                            
+                            // 对齐 16 
+                            targetW = (targetW / 16) * 16
+                            targetH = (targetH / 16) * 16
+                            
+                            // 先旋转
+                            val rotatedBitmap = android.graphics.Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true)
+                            // 再缩放
+                            finalBitmap = android.graphics.Bitmap.createScaledBitmap(rotatedBitmap, targetW, targetH, true)
+                            
+                            if (rotatedBitmap != originalBitmap) originalBitmap.recycle()
+                            if (finalBitmap != rotatedBitmap) rotatedBitmap.recycle()
+                            
+                            inputStates["width"] = targetW
+                            inputStates["height"] = targetH
                         }
-                        w = (w / 16) * 16
-                        h = (h / 16) * 16
-                        inputStates["width"] = w
-                        inputStates["height"] = h
                     }
 
                     val tempFile = File(context.cacheDir, "upload_${System.currentTimeMillis()}.png")
                     if (finalBitmap != null) {
-                        tempFile.outputStream().use { out ->
-                            finalBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
-                        }
+                        tempFile.outputStream().use { out -> finalBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out) }
                         finalBitmap.recycle()
                     } else {
-                        val inputStream = context.contentResolver.openInputStream(uri)
-                        if (inputStream != null) {
-                            tempFile.outputStream().use { inputStream.copyTo(it) }
-                        }
+                        context.contentResolver.openInputStream(uri)?.use { input -> tempFile.outputStream().use { output -> input.copyTo(output) } }
                     }
 
                     val requestFile = tempFile.asRequestBody("image/png".toMediaTypeOrNull())
