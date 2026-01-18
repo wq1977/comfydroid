@@ -1,12 +1,18 @@
 package win.qiangge.comfydroid
 
-import android.os.Bundle
-import android.widget.Toast
-import android.util.Log
+import android.app.Activity
 import android.content.Context
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,27 +21,38 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody
 import win.qiangge.comfydroid.model.*
 import win.qiangge.comfydroid.network.NetworkClient
 import win.qiangge.comfydroid.network.PromptRequest
 import win.qiangge.comfydroid.network.WorkflowEngine
-import win.qiangge.comfydroid.network.WebSocketManager
 import win.qiangge.comfydroid.service.PollingService
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import java.util.UUID
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,7 +74,6 @@ fun ComfyDroidApp() {
     val db = remember { AppDatabase.getDatabase(context) }
     val dao = db.generationDao()
     
-    // 启动 HTTP 轮询 (用于最终结果确认)
     LaunchedEffect(Unit) {
         val service = PollingService(dao)
         service.startPolling()
@@ -68,22 +84,19 @@ fun ComfyDroidApp() {
     var serverIp by remember { mutableStateOf(prefs.getString("last_ip", "") ?: "") }
     var serverPort by remember { mutableStateOf(prefs.getString("last_port", "8188") ?: "8188") }
     
-    // 获取或生成持久化的 Client ID
     var clientId by remember { mutableStateOf(prefs.getString("client_id", "") ?: "") }
     if (clientId.isEmpty()) {
         clientId = UUID.randomUUID().toString()
         prefs.edit().putString("client_id", clientId).apply()
     }
 
-    // WebSocket 管理器
-    val wsManager = remember { WebSocketManager(dao) }
-
-    // 当连接配置好后，启动 WebSocket
-    LaunchedEffect(serverConfigured, serverIp, serverPort) {
-        if (serverConfigured && serverIp.isNotEmpty()) {
-            wsManager.connect(serverIp, serverPort, clientId)
-        }
-    }
+    // WebSocket (如果需要可启用)
+    // val wsManager = remember { WebSocketManager(dao) }
+    // LaunchedEffect(serverConfigured, serverIp, serverPort) {
+    //    if (serverConfigured && serverIp.isNotEmpty()) {
+    //        wsManager.connect(serverIp, serverPort, clientId)
+    //    }
+    // }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -153,69 +166,159 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
     val workflows = WorkflowRegistry.workflows
     var selectedWorkflow by remember { mutableStateOf<SuperWorkflow?>(null) }
     val libraryResults by dao.getAll().collectAsState(initial = emptyList())
+    
+    // 全屏预览状态
+    var fullScreenResult by remember { mutableStateOf<GenerationResult?>(null) }
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                val items = listOf(Screen.Generator, Screen.Library)
-                items.forEach { screen ->
-                    NavigationBarItem(
-                        icon = { Icon(screen.icon, contentDescription = screen.label) },
-                        label = { Text(screen.label) },
-                        selected = currentScreen == screen,
-                        onClick = { 
-                            currentScreen = screen 
-                            if (screen == Screen.Library) selectedWorkflow = null
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            bottomBar = {
+                if (fullScreenResult == null) { // 全屏时隐藏 BottomBar
+                    NavigationBar {
+                        val items = listOf(Screen.Generator, Screen.Library)
+                        items.forEach { screen ->
+                            NavigationBarItem(
+                                icon = { Icon(screen.icon, contentDescription = screen.label) },
+                                label = { Text(screen.label) },
+                                selected = currentScreen == screen,
+                                onClick = { 
+                                    currentScreen = screen 
+                                    if (screen == Screen.Library) selectedWorkflow = null
+                                }
+                            )
                         }
-                    )
+                    }
                 }
             }
-        }
-    ) {
-        Box(modifier = Modifier.padding(it)) {
-            when (currentScreen) {
-                Screen.Generator -> {
-                    if (selectedWorkflow == null) {
-                        LazyColumn(
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            item { 
-                                Text("Workflows", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(bottom = 8.dp)) 
-                            } 
-                            items(workflows) { wf ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth().clickable { selectedWorkflow = wf },
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                                ) {
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text(wf.name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(wf.description, style = MaterialTheme.typography.bodyMedium)
+        ) { padding ->
+            Box(modifier = Modifier.padding(padding)) {
+                when (currentScreen) {
+                    Screen.Generator -> {
+                        // ... (Generator logic unchanged)
+                        if (selectedWorkflow == null) {
+                            LazyColumn(
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                item { 
+                                    Text("Workflows", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(bottom = 8.dp)) 
+                                }
+                                items(workflows) { wf ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().clickable { selectedWorkflow = wf },
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(wf.name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(wf.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
                                 }
                             }
+                        } else {
+                            WorkflowExecutorScreen(
+                                workflow = selectedWorkflow!!, 
+                                onBack = { selectedWorkflow = null },
+                                onSuccess = {
+                                    selectedWorkflow = null
+                                    currentScreen = Screen.Library
+                                },
+                                dao = dao,
+                                clientId = clientId
+                            )
                         }
-                    } else {
-                        WorkflowExecutorScreen(
-                            workflow = selectedWorkflow!!, 
-                            onBack = { selectedWorkflow = null },
-                            onSuccess = { 
-                                selectedWorkflow = null
-                                currentScreen = Screen.Library
-                            },
-                            dao = dao,
-                            clientId = clientId
+                    }
+                    Screen.Library -> {
+                        LibraryScreen(
+                            results = libraryResults, 
+                            serverUrl = "http://$ip:$port", 
+                            onDelete = { /* TODO */ },
+                            onImageClick = { fullScreenResult = it } // 点击触发全屏
                         )
                     }
                 }
-                Screen.Library -> {
-                    LibraryScreen(results = libraryResults, serverUrl = "http://$ip:$port", onDelete = { /* TODO */ })
-                }
             }
+        }
+
+        // 全屏覆盖层
+        if (fullScreenResult != null) {
+            FullScreenImageViewer(
+                result = fullScreenResult!!,
+                serverUrl = "http://$ip:$port",
+                onDismiss = { fullScreenResult = null }
+            )
         }
     }
 }
+
+@Composable
+fun FullScreenImageViewer(
+    result: GenerationResult,
+    serverUrl: String,
+    onDismiss: () -> Unit
+) {
+    val firstFile = result.outputFiles.split(",").firstOrNull()?.trim()
+    val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile&type=output" else null
+    val context = LocalContext.current
+    
+    // 隐藏系统栏
+    DisposableEffect(Unit) {
+        val window = (context as? Activity)?.window
+        if (window != null) {
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        onDispose {
+            val window = (context as? Activity)?.window
+            if (window != null) {
+                val controller = WindowInsetsControllerCompat(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable { onDismiss() }
+            .padding(0.dp), // 确保无边距
+        contentAlignment = Alignment.Center
+    ) {
+        if (imageUrl != null) {
+            var scale by remember { mutableStateOf(1f) }
+            var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = result.promptText,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 5f)
+                            offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+                        }
+                    }
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y
+                    ),
+                contentScale = ContentScale.Fit
+            )
+        }
+    }
+}
+
+// ... (WorkflowExecutorScreen and other components) 
 
 @Composable
 fun WorkflowExecutorScreen(
@@ -229,6 +332,8 @@ fun WorkflowExecutorScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember { WorkflowEngine(context) }
+    
+    // 初始化状态
     val inputStates = remember { 
         mutableStateMapOf<String, Any>().apply {
             workflow.inputs.forEach { input ->
@@ -240,42 +345,70 @@ fun WorkflowExecutorScreen(
             }
         }
     }
+    
     var isGenerating by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
+    
+    // 区分基础和高级输入
+    val basicInputs = workflow.inputs.filter { it.id == "prompt" || it is ImageArrayInput }
+    val advancedInputs = workflow.inputs.filter { it.id != "prompt" && it !is ImageArrayInput }
+    var showAdvanced by remember { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)) {
+        // Header
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = onBack) { Text("Back") }
             Spacer(modifier = Modifier.width(16.dp))
             Text(workflow.name, style = MaterialTheme.typography.titleLarge)
         }
         Spacer(modifier = Modifier.height(16.dp))
-        workflow.inputs.forEach { input ->
-            when (input) {
-                is TextInput -> {
-                    TextField(value = inputStates[input.id] as? String ?: "", onValueChange = { inputStates[input.id] = it },
-                        label = { Text(input.label) }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        minLines = if (input.multiline) 3 else 1, enabled = !isGenerating)
+
+        // --- Basic Area ---
+        basicInputs.forEach { input ->
+            InputControl(input, inputStates, isGenerating)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // --- Advanced Area ---
+        if (advancedInputs.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { showAdvanced = !showAdvanced },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Advanced Settings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Icon(
+                        if (showAdvanced) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Toggle Advanced"
+                    )
                 }
-                is NumberInput -> {
-                    TextField(value = inputStates[input.id]?.toString() ?: "", 
-                        onValueChange = { val filtered = it.filter { char -> char.isDigit() || char == '.' }
-                            inputStates[input.id] = if (input.isInteger) filtered.toLongOrNull() ?: 0L else filtered.toFloatOrNull() ?: 0f },
-                        label = { Text(input.label) }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !isGenerating)
-                }
-                is ImageArrayInput -> {
-                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(input.label, style = MaterialTheme.typography.labelMedium)
-                            Text("Image Array (0 to ${input.maxCount} images)", style = MaterialTheme.typography.bodySmall)
+            }
+            
+            AnimatedVisibility(visible = showAdvanced, enter = expandVertically(), exit = shrinkVertically()) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    // Aspect Ratio Shortcuts
+                    AspectRatioSelector(
+                        onSelect = { w, h ->
+                            inputStates["width"] = w
+                            inputStates["height"] = h
                         }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    advancedInputs.forEach { input ->
+                        InputControl(input, inputStates, isGenerating)
                     }
                 }
-                else -> {}
             }
         }
+
         Spacer(modifier = Modifier.height(32.dp))
+        
+        // Generate Button
         if (isGenerating) {
             CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
         } else {
@@ -283,26 +416,20 @@ fun WorkflowExecutorScreen(
                 isGenerating = true
                 scope.launch {
                     try {
-                        val promptInput = inputStates["prompt"] as? String ?: ""
-                        val seedRaw = inputStates["seed"]
-                        val seed = when(seedRaw) {
-                            is Long -> seedRaw
-                            is Float -> seedRaw.toLong()
-                            is Int -> seedRaw.toLong()
-                            else -> 0L
-                        }
-                        
-                        val workflowJson = engine.buildFluxWorkflow(promptInput, seed)
-                        // 使用全局 clientId
+                        val promptText = inputStates["prompt"] as? String ?: ""
+                        // 收集所有参数传给 Engine
+                        val workflowJson = engine.buildFluxWorkflow(inputStates)
                         val finalJson = "{\"client_id\": \"$clientId\", \"prompt\": $workflowJson}"
                         
+                        Log.d("ComfyDroid", "Submitting Modified JSON: $finalJson")
+
                         val mediaType = "application/json".toMediaTypeOrNull()
                         val body = RequestBody.create(mediaType, finalJson)
                         val response = NetworkClient.getApiService().queuePromptRaw(body)
                         
                         val newRecord = GenerationResult(
                             promptId = response.prompt_id, workflowName = workflow.name,
-                            promptText = promptInput, timestamp = System.currentTimeMillis(),
+                            promptText = promptText, timestamp = System.currentTimeMillis(),
                             outputType = "IMAGE", outputFiles = "", status = "PENDING"
                         )
                         dao.insert(newRecord)
@@ -314,10 +441,95 @@ fun WorkflowExecutorScreen(
                         isGenerating = false
                     }
                 }
-            }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+            }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) { 
                 Text("GENERATE", style = MaterialTheme.typography.labelLarge)
             }
         }
         Spacer(modifier = Modifier.height(100.dp))
+    }
+}
+
+@Composable
+fun InputControl(input: WorkflowInput, inputStates: MutableMap<String, Any>, isGenerating: Boolean) {
+    when (input) {
+        is TextInput -> {
+            TextField(
+                value = inputStates[input.id] as? String ?: "",
+                onValueChange = { inputStates[input.id] = it },
+                label = { Text(input.label) },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                minLines = if (input.multiline) 3 else 1,
+                enabled = !isGenerating
+            )
+        }
+        is NumberInput -> {
+            if (input.id == "seed") {
+                // Seed input with Dice button
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    TextField(
+                        value = inputStates[input.id]?.toString() ?: "",
+                        onValueChange = { 
+                            val filtered = it.filter { char -> char.isDigit() || char == '.' }
+                            inputStates[input.id] = if (input.isInteger) filtered.toLongOrNull() ?: 0L else filtered.toFloatOrNull() ?: 0f
+                        },
+                        label = { Text(input.label) },
+                        modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        enabled = !isGenerating
+                    )
+                    IconButton(onClick = { 
+                        inputStates[input.id] = (0..Long.MAX_VALUE).random() 
+                    }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Randomize Seed")
+                    }
+                }
+            } else {
+                TextField(
+                    value = inputStates[input.id]?.toString() ?: "",
+                    onValueChange = { 
+                        val filtered = it.filter { char -> char.isDigit() || char == '.' }
+                        inputStates[input.id] = if (input.isInteger) filtered.toLongOrNull() ?: 0L else filtered.toFloatOrNull() ?: 0f
+                    },
+                    label = { Text(input.label) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    enabled = !isGenerating
+                )
+            }
+        }
+        is ImageArrayInput -> {
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(input.label, style = MaterialTheme.typography.labelMedium)
+                    Text("Image Array (0 to ${input.maxCount} images)", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        is ImageInput -> {
+            Text("Single Image Input (Not implemented)", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AspectRatioSelector(onSelect: (Int, Int) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        AssistChip(
+            onClick = { onSelect(1024, 1024) },
+            label = { Text("1:1") }
+        )
+        AssistChip(
+            onClick = { onSelect(832, 1216) }, // ~2:3 Portrait
+            label = { Text("Port.") }
+        )
+        AssistChip(
+            onClick = { onSelect(1216, 832) }, // ~3:2 Land
+            label = { Text("Land.") }
+        )
     }
 }
