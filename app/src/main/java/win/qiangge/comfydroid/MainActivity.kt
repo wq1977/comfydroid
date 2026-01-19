@@ -426,6 +426,11 @@ fun WorkflowExecutorScreen(
     val advancedInputs = workflow.inputs.filter { it.id != "prompt" && it.id != "width" && it.id != "height" && it !is ImageArrayInput }
     var showAdvanced by remember { mutableStateOf(false) }
 
+    // 处理系统返回键，执行与界面 Back 按钮相同的逻辑
+    BackHandler {
+        onBack()
+    }
+
     Column(modifier = modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = onBack) { Text("Back") }
