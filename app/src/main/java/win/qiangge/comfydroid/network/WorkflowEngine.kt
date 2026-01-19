@@ -65,6 +65,7 @@ class WorkflowEngine(private val context: Context) {
 
     private fun buildFlux2Klein(inputs: Map<String, Any>): String {
         val prompt = inputs["prompt"] as? String ?: ""
+        val negativePrompt = inputs["negative_prompt"] as? String ?: ""
         val seedRaw = inputs["seed"]
         val seed = when(seedRaw) {
             is Long -> seedRaw
@@ -89,6 +90,12 @@ class WorkflowEngine(private val context: Context) {
             val node = workflow.getJSONObject(promptNodeId)
             val nodeInputs = node.getJSONObject("inputs")
             nodeInputs.put("text", prompt)
+        }
+
+        // 修改 Negative Prompt (仅支持 flux_base.json 中的 75:67，参考图模板中目前是零化)
+        val negativeNodeId = "75:67"
+        if (templateName == "flux_base.json" && workflow.has(negativeNodeId)) {
+            workflow.getJSONObject(negativeNodeId).getJSONObject("inputs").put("text", negativePrompt)
         }
         
         // 修改 Seed

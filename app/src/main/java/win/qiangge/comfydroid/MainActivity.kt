@@ -584,9 +584,18 @@ fun InputControl(input: WorkflowInput, inputStates: MutableMap<String, Any>, isG
         }
         is NumberInput -> {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                TextField(value = inputStates[input.id]?.toString() ?: "", 
-                    onValueChange = { val filtered = it.filter { char -> char.isDigit() || char == '.' }
-                        inputStates[input.id] = if (input.isInteger) filtered.toLongOrNull() ?: 0L else filtered.toFloatOrNull() ?: 0f },
+                val value = inputStates[input.id]
+                val displayValue = if (input.isInteger) {
+                    (value as? Number)?.toLong()?.toString() ?: ""
+                } else {
+                    value?.toString() ?: ""
+                }
+                
+                TextField(value = displayValue, 
+                    onValueChange = { 
+                        val filtered = it.filter { char -> char.isDigit() || char == '.' }
+                        inputStates[input.id] = if (input.isInteger) filtered.toLongOrNull() ?: 0L else filtered.toFloatOrNull() ?: 0f 
+                    },
                     label = { Text(input.label) }, modifier = Modifier.weight(1f).padding(vertical = 8.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !isGenerating)
                 if (input.id == "seed") {
