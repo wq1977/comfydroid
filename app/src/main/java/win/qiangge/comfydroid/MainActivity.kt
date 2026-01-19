@@ -419,8 +419,8 @@ fun WorkflowExecutorScreen(
 
     var isGenerating by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
-    val basicInputs = workflow.inputs.filter { it.id == "prompt" || it is ImageArrayInput }
-    val advancedInputs = workflow.inputs.filter { it.id != "prompt" && it !is ImageArrayInput }
+    val basicInputs = workflow.inputs.filter { it.id == "prompt" || it.id == "width" || it.id == "height" || it is ImageArrayInput }
+    val advancedInputs = workflow.inputs.filter { it.id != "prompt" && it.id != "width" && it.id != "height" && it !is ImageArrayInput }
     var showAdvanced by remember { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)) {
@@ -477,6 +477,10 @@ fun WorkflowExecutorScreen(
                 InputControl(input, inputStates, isGenerating)
             }
         }
+        
+        // 比例选择器现在也属于常规设置
+        AspectRatioSelector(onSelect = { w, h -> inputStates["width"] = w; inputStates["height"] = h })
+        
         Spacer(modifier = Modifier.height(16.dp))
         if (advancedInputs.isNotEmpty()) {
             Card(modifier = Modifier.fillMaxWidth().clickable { showAdvanced = !showAdvanced },
@@ -488,8 +492,6 @@ fun WorkflowExecutorScreen(
             }
             AnimatedVisibility(visible = showAdvanced, enter = expandVertically(), exit = shrinkVertically()) {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
-                    AspectRatioSelector(onSelect = { w, h -> inputStates["width"] = w; inputStates["height"] = h })
-                    Spacer(modifier = Modifier.height(8.dp))
                     advancedInputs.forEach { InputControl(it, inputStates, isGenerating) }
                 }
             }
