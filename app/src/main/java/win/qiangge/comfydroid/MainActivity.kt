@@ -60,6 +60,8 @@ import androidx.exifinterface.media.ExifInterface
 import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
+import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
+import me.saket.telephoto.zoomable.rememberZoomableImageState
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.launch
@@ -151,7 +153,7 @@ fun ComfyDroidApp() {
                 }
             )
         } else {
-            MainScreen(serverIp, serverPort, clientId, dao)
+            MainScreen(serverIp, serverPort, clientId, dao, wsManager)
         }
     }
 }
@@ -198,7 +200,7 @@ fun ConnectionScreen(initialIp: String, initialPort: String, onConnect: (String,
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
+fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao, wsManager: WebSocketManager) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Generator) }
     val workflows = WorkflowRegistry.workflows
     var selectedWorkflow by remember { mutableStateOf<SuperWorkflow?>(null) }
@@ -264,7 +266,10 @@ fun MainScreen(ip: String, port: String, clientId: String, dao: GenerationDao) {
                                 },
                                 dao = dao,
                                 clientId = clientId,
-                                serverUrl = "http://$ip:$port"
+                                serverUrl = "http://$ip:$port",
+                                wsManager = wsManager,
+                                serverIp = ip,
+                                serverPort = port
                             )
                         }
                     }
@@ -304,6 +309,9 @@ fun WorkflowExecutorScreen(
     dao: GenerationDao, 
     clientId: String, 
     serverUrl: String,
+    wsManager: WebSocketManager,
+    serverIp: String,
+    serverPort: String,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -494,9 +502,20 @@ fun WorkflowExecutorScreen(
                                     isGenerating = true
                                 scope.launch {
                                     try {
+                                        // 每次发起任务都重新建立 WebSocket 连接，确保其可用性
+                                        // 甚至可以新建一个 clientId
+                                        val currentClientId = UUID.randomUUID().toString()
+                                        wsManager.connect(serverIp, serverPort, currentClientId)
+                                        
+                                        // 等待连接成功
+                                        val connected = wsManager.waitForConnection(5000)
+                                        if (!connected) {
+                                            throw Exception("Failed to establish WebSocket connection")
+                                        }
+
                                         val promptText = inputStates["prompt"] as? String ?: ""
                                         val workflowJson = engine.buildWorkflow(workflow.id, inputStates)
-                                        val finalJson = "{\"client_id\": \"$clientId\", \"prompt\": $workflowJson}"
+                                        val finalJson = "{\"client_id\": \"$currentClientId\", \"prompt\": $workflowJson}"
                 
                         val mediaType = "application/json".toMediaTypeOrNull()
                         val body = RequestBody.create(mediaType, finalJson)
@@ -595,64 +614,26 @@ fun FullScreenImageViewer(results: List<GenerationResult>, initialIndex: Int, se
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
             beyondBoundsPageCount = 1,
-            // 只有在放大状态下才禁用 Pager 的滑动，交给图片内部处理偏移
             userScrollEnabled = true 
         ) { page ->
             val result = results[page]
             val firstFile = result.outputFiles.split(",").firstOrNull()?.trim()
             val imageUrl = if (!firstFile.isNullOrEmpty()) "$serverUrl/view?filename=$firstFile&type=output" else null
 
-            var scale by remember { mutableStateOf(1f) }
-            var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-
-            // 切换页面重置缩放
-            LaunchedEffect(pagerState.currentPage) {
-                if (pagerState.currentPage != page) {
-                    scale = 1f
-                    offset = androidx.compose.ui.geometry.Offset.Zero
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = { onDismiss() },
-                            onDoubleTap = {
-                                scale = if (scale > 1f) 1f else 3f
-                                offset = androidx.compose.ui.geometry.Offset.Zero
-                            },
-                            onLongPress = { showSheet = true }
-                        )
-                    }
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            scale = (scale * zoom).coerceIn(1f, 5f)
-                            if (scale > 1f) {
-                                offset += pan
-                            } else {
-                                offset = androidx.compose.ui.geometry.Offset.Zero
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                if (imageUrl != null) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current).data(imageUrl).crossfade(true).build(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer(
-                                scaleX = scale,
-                                scaleY = scale,
-                                translationX = offset.x,
-                                translationY = offset.y
-                            ),
-                        contentScale = ContentScale.Fit
-                    )
-                }
+            if (imageUrl != null) {
+                val zoomableState = rememberZoomableImageState()
+                ZoomableAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(imageUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = null,
+                    state = zoomableState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                    onClick = { onDismiss() },
+                    onLongClick = { showSheet = true }
+                )
             }
         }
 

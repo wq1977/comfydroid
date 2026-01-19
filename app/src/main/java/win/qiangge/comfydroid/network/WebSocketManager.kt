@@ -6,10 +6,18 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import okhttp3.*
 import win.qiangge.comfydroid.model.GenerationDao
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
+
+enum class ConnectionStatus {
+    DISCONNECTED, CONNECTING, CONNECTED, ERROR
+}
 
 class WebSocketManager(private val dao: GenerationDao) {
     private var webSocket: WebSocket? = null
@@ -20,12 +28,20 @@ class WebSocketManager(private val dao: GenerationDao) {
     private val gson = Gson()
     private val scope = CoroutineScope(Dispatchers.IO)
     
+    private val _connectionStatus = MutableStateFlow(ConnectionStatus.DISCONNECTED)
+    val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus
+
     // 记录每个任务已执行的节点数
     private val taskNodeCounts = ConcurrentHashMap<String, Int>()
 
     fun connect(ip: String, port: String, clientId: String) {
-        // 先关闭之前的连接，防止多个连接竞争
-        webSocket?.close(1000, "New connection requested")
+        // 如果已经是连接状态，且参数相同，可以考虑跳过，但为了稳定性，用户要求每次发起都要确保连接
+        // 我们先关闭之前的
+        if (_connectionStatus.value == ConnectionStatus.CONNECTED) {
+            webSocket?.close(1000, "Reconnecting")
+        }
+        
+        _connectionStatus.value = ConnectionStatus.CONNECTING
         
         val url = "ws://$ip:$port/ws?clientId=$clientId"
         Log.d("ComfyWS", "Attempting connection to: $url")
@@ -34,6 +50,7 @@ class WebSocketManager(private val dao: GenerationDao) {
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d("ComfyWS", "CONNECTED SUCCESSFULLY")
+                _connectionStatus.value = ConnectionStatus.CONNECTED
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -44,12 +61,31 @@ class WebSocketManager(private val dao: GenerationDao) {
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d("ComfyWS", "Closing ($code): $reason")
+                _connectionStatus.value = ConnectionStatus.DISCONNECTED
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d("ComfyWS", "Closed: $reason")
+                _connectionStatus.value = ConnectionStatus.DISCONNECTED
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e("ComfyWS", "CONNECTION FAILURE", t)
+                _connectionStatus.value = ConnectionStatus.ERROR
             }
         })
+    }
+
+    suspend fun waitForConnection(timeoutMs: Long = 5000): Boolean {
+        return try {
+            withTimeout(timeoutMs) {
+                _connectionStatus.first { it == ConnectionStatus.CONNECTED }
+                true
+            }
+        } catch (e: Exception) {
+            Log.e("ComfyWS", "Timeout waiting for connection")
+            false
+        }
     }
 
     private fun handleMessage(text: String) {
