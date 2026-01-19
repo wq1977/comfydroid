@@ -45,13 +45,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -541,11 +544,43 @@ fun WorkflowExecutorScreen(
 
 @Composable
 fun InputControl(input: WorkflowInput, inputStates: MutableMap<String, Any>, isGenerating: Boolean) {
+    val scope = rememberCoroutineScope()
     when (input) {
         is TextInput -> {
-            TextField(value = inputStates[input.id] as? String ?: "", onValueChange = { inputStates[input.id] = it },
-                label = { Text(input.label) }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                minLines = if (input.multiline) 3 else 1, enabled = !isGenerating)
+            val text = inputStates[input.id] as? String ?: ""
+            var textFieldValue by remember { mutableStateOf(TextFieldValue(text)) }
+            
+            // 同步外部状态（例如在切换 Workflow 时重置内容）
+            LaunchedEffect(text) {
+                if (text != textFieldValue.text) {
+                    textFieldValue = textFieldValue.copy(text = text)
+                }
+            }
+
+            TextField(
+                value = textFieldValue,
+                onValueChange = { 
+                    textFieldValue = it
+                    inputStates[input.id] = it.text
+                },
+                label = { Text(input.label) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .onFocusChanged { focusState ->
+                        if (focusState.isFocused) {
+                            scope.launch {
+                                kotlinx.coroutines.delay(100)
+                                // 当获得焦点并经过微小延时后，全选文本
+                                textFieldValue = textFieldValue.copy(
+                                    selection = TextRange(0, textFieldValue.text.length)
+                                )
+                            }
+                        }
+                    },
+                minLines = if (input.multiline) 3 else 1,
+                enabled = !isGenerating
+            )
         }
         is NumberInput -> {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
